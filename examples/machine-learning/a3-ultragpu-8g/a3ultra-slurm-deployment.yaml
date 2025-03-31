@@ -22,5 +22,4 @@ vars:
   project_id: # supply existing project id
   region: # supply region with a3-ultragpu-8g capacity in reservation
   zone: # supply zone with a3-ultragpu-8g capacity in reservation
-  a3u_reservation_name: # supply a3-ultragpu-8g reservation name
   a3u_cluster_size: # supply a3-ultragpu-8g reservation size

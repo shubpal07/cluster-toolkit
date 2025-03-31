@@ -21,7 +21,6 @@ vars:
   region: # supply region
   zone: # supply zone
   a4h_cluster_size: # supply cluster size
-  a4h_reservation_name: # supply reservation name
   # Image settings
   base_image:
     project: ubuntu-os-cloud
@@ -370,7 +369,8 @@ deployment_groups:
       enable_placement: false
       disk_type: hyperdisk-balanced
       on_host_maintenance: TERMINATE
-      reservation_name: $(vars.a4h_reservation_name)
+      dws_flex:
+        enabled: true
       advanced_machine_features:
         threads_per_core: null # Use platform default value
       node_conf:
@@ -450,3 +450,5 @@ deployment_groups:
       machine_type: n2-standard-80
       controller_startup_script: $(controller_startup.startup_script)
       enable_external_prolog_epilog: true
+      endpoint_versions:
+        compute: "alpha"
