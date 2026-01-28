@@ -19,6 +19,11 @@ output "node_pool_names" {
   value       = google_container_node_pool.node_pool[*].name
 }
 
+output "node_pool_ids" {
+  description = "The unique IDs of the node pools created."
+  value       = google_container_node_pool.node_pool[*].id
+}
+
 locals {
   # Shared core machines only have 1 cpu allocatable, even if they have 2 cpu capacity
   vcpu        = local.machine_shared_core ? 1 : local.guest_cpus

@@ -99,12 +99,9 @@ module "install_kueue" {
     file("${path.module}/kueue/kueue-helm-values.yaml")
   ]
 
-  depends_on = [var.gke_cluster_exists]
-}
+  deployment_dependency_ids = var.system_node_pool_id != null ? [var.system_node_pool_id] : []
 
-resource "time_sleep" "wait_for_webhook" {
-  create_duration = "120s"
-  depends_on      = [module.install_kueue]
+  depends_on = [var.gke_cluster_exists]
 }
 
 module "configure_kueue" {
@@ -132,7 +129,7 @@ module "configure_kueue" {
     })
   ]
 
-  depends_on = [time_sleep.wait_for_webhook]
+  depends_on = [module.install_kueue]
 
 }
 

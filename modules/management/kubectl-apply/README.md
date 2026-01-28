@@ -190,7 +190,6 @@ limitations under the License.
 | <a name="requirement_helm"></a> [helm](#requirement\_helm) | ~> 2.17 |
 | <a name="requirement_http"></a> [http](#requirement\_http) | ~> 3.0 |
 | <a name="requirement_kubectl"></a> [kubectl](#requirement\_kubectl) | >= 1.7.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | ~> 0.9 |
 
 ## Providers
 
@@ -199,7 +198,6 @@ limitations under the License.
 | <a name="provider_google"></a> [google](#provider\_google) | >= 7.2 |
 | <a name="provider_http"></a> [http](#provider\_http) | ~> 3.0 |
 | <a name="provider_terraform"></a> [terraform](#provider\_terraform) | n/a |
-| <a name="provider_time"></a> [time](#provider\_time) | ~> 0.9 |
 
 ## Modules
 
@@ -221,7 +219,6 @@ limitations under the License.
 | [terraform_data.initial_gib_version](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_data.jobset_validations](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
 | [terraform_data.kueue_validations](https://registry.terraform.io/providers/hashicorp/terraform/latest/docs/resources/data) | resource |
-| [time_sleep.wait_for_webhook](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
 | [google_client_config.default](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/client_config) | data source |
 | [google_container_cluster.gke_cluster](https://registry.terraform.io/providers/hashicorp/google/latest/docs/data-sources/container_cluster) | data source |
 | [http_http.manifest_from_url](https://registry.terraform.io/providers/hashicorp/http/latest/docs/data-sources/http) | data source |
@@ -239,6 +236,7 @@ limitations under the License.
 | <a name="input_kueue"></a> [kueue](#input\_kueue) | Install and configure [Kueue](https://kueue.sigs.k8s.io/docs/overview/) workload scheduler. If `wait` is true, the installation will wait for resources to be ready. A configuration yaml/template file can be provided with config\_path to be applied right after kueue installation. If a template file provided, its variables can be set to config\_template\_vars. | <pre>object({<br/>    install              = optional(bool, false)<br/>    wait                 = optional(bool, false)<br/>    version              = optional(string, "0.13.3")<br/>    config_path          = optional(string, null)<br/>    config_template_vars = optional(map(any), null)<br/>  })</pre> | `{}` | no |
 | <a name="input_nvidia_dra_driver"></a> [nvidia\_dra\_driver](#input\_nvidia\_dra\_driver) | Installs [Nvidia DRA driver](https://github.com/NVIDIA/k8s-dra-driver-gpu) which supports Dynamic Resource Allocation for NVIDIA GPUs in Kubernetes | <pre>object({<br/>    install = optional(bool, false)<br/>    version = optional(string, "v25.3.0")<br/>  })</pre> | `{}` | no |
 | <a name="input_project_id"></a> [project\_id](#input\_project\_id) | The project ID that hosts the gke cluster. | `string` | n/a | yes |
+| <a name="input_system_node_pool_id"></a> [system\_node\_pool\_id](#input\_system\_node\_pool\_id) | The ID of the system node pool. Used to ensure the node pool remains active during Kueue uninstallation. | `string` | `null` | no |
 | <a name="input_target_architecture"></a> [target\_architecture](#input\_target\_architecture) | The target architecture for the GKE nodes and gIB plugin (e.g., 'x86\_64' or 'arm64'). | `string` | `"x86_64"` | no |
 
 ## Outputs
