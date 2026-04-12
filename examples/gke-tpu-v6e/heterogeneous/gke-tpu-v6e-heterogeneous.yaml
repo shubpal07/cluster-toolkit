@@ -1,0 +1,211 @@
+# Copyright 2026 "Google LLC"
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+blueprint_name: gke-tpu-v6e-heterogeneous
+
+vars:
+  project_id:
+  deployment_name: gke-tpu-v6e-het
+  region:
+  zone:
+  authorized_cidr:
+
+  system_node_pool_disk_size_gb: 200
+  v6e_node_pool_disk_size_gb: 100
+
+  kueue_configuration_path: $(ghpc_stage("./kueue-config-heterogeneous.yaml.tftpl"))
+
+  # Reservation names for each topology
+  reservation_16x16:
+  reservation_8x16:
+  reservation_8x8:
+
+deployment_groups:
+- group: primary
+  modules:
+  - id: net-0
+    source: modules/network/vpc
+    settings:
+      network_name: $(vars.deployment_name)-net-0
+      subnetworks:
+      - subnet_name: $(vars.deployment_name)-sub-0
+        subnet_region: $(vars.region)
+        subnet_ip: 192.168.0.0/18
+      secondary_ranges_list:
+      - subnetwork_name: $(vars.deployment_name)-sub-0
+        ranges:
+        - range_name: pods
+          ip_cidr_range: 10.4.0.0/14
+        - range_name: services
+          ip_cidr_range: 10.0.32.0/20
+      firewall_rules:
+      - name: $(vars.deployment_name)-internal-0
+        ranges: [192.168.0.0/16]
+        allow:
+        - protocol: tcp
+          ports: ["0-65535"]
+        - protocol: udp
+          ports: ["0-65535"]
+        - protocol: icmp
+
+  - id: net-1
+    source: modules/network/vpc
+    settings:
+      network_name: $(vars.deployment_name)-net-1
+      subnetworks:
+      - subnet_name: $(vars.deployment_name)-sub-1
+        subnet_region: $(vars.region)
+        subnet_ip: 192.168.64.0/18
+      firewall_rules:
+      - name: $(vars.deployment_name)-internal-1
+        ranges: [192.168.0.0/16]
+        allow:
+        - protocol: tcp
+          ports: ["0-65535"]
+        - protocol: udp
+          ports: ["0-65535"]
+        - protocol: icmp
+
+  - id: node_pool_service_account
+    source: modules/project/service-account
+    settings:
+      name: gke-np-sa
+      project_roles:
+      - logging.logWriter
+      - monitoring.metricWriter
+      - monitoring.viewer
+      - stackdriver.resourceMetadata.writer
+      - storage.objectViewer
+      - artifactregistry.reader
+
+  - id: workload_service_account
+    source: modules/project/service-account
+    settings:
+      name: gke-wl-sa
+      project_roles:
+      - logging.logWriter
+      - monitoring.metricWriter
+      - monitoring.viewer
+      - stackdriver.resourceMetadata.writer
+      - storage.objectAdmin
+      - artifactregistry.reader
+      - container.admin
+
+  - id: gke-cluster
+    source: modules/scheduler/gke-cluster
+    use: [net-0, workload_service_account]
+    settings:
+      system_node_pool_machine_type: "n2-standard-8"
+      system_node_pool_disk_size_gb: $(vars.system_node_pool_disk_size_gb)
+      system_node_pool_taints: []
+      enable_private_endpoint: false
+      configure_workload_identity_sa: true
+      master_authorized_networks:
+      - cidr_block: $(vars.authorized_cidr)
+        display_name: "kubectl-access-network"
+      additional_networks:
+      - network=net-1.network_name
+        subnetwork=net-1.subnetwork_name
+        subnetwork_project=vars.project_id
+        nic_type="GVNIC"
+      version_prefix: "1.32."
+      release_channel: REGULAR
+
+  # Node Pool for v6e-256 (16x16) - 6 slices
+  - id: pool-16x16
+    source: modules/compute/gke-node-pool
+    use: [gke-cluster, node_pool_service_account]
+    settings:
+      num_slices: 6
+      name: pool-16x16
+      disk_type: hyperdisk-balanced
+      machine_type: ct6e-standard-4t
+      auto_upgrade: true
+      zones: [$(vars.zone)]
+      disk_size_gb: $(vars.v6e_node_pool_disk_size_gb)
+      static_node_count: 64 # 256 chips / 4 chips per node
+      additional_networks:
+      - network=net-1.network_name
+        subnetwork=net-1.subnetwork_name
+        subnetwork_project=vars.project_id
+        nic_type="GVNIC"
+      placement_policy:
+        type: COMPACT
+      reservation_affinity:
+        consume_reservation_type: SPECIFIC_RESERVATION
+        specific_reservations:
+        - name: $(vars.reservation_16x16)
+      tpu_topology: 16x16
+
+  # Node Pool for v6e-128 (8x16) - 2 slices
+  - id: pool-8x16
+    source: modules/compute/gke-node-pool
+    use: [gke-cluster, node_pool_service_account]
+    settings:
+      num_slices: 2
+      name: pool-8x16
+      disk_type: hyperdisk-balanced
+      machine_type: ct6e-standard-4t
+      auto_upgrade: true
+      zones: [$(vars.zone)]
+      disk_size_gb: $(vars.v6e_node_pool_disk_size_gb)
+      static_node_count: 32 # 128 chips / 4 chips per node
+      additional_networks:
+      - network=net-1.network_name
+        subnetwork=net-1.subnetwork_name
+        subnetwork_project=vars.project_id
+        nic_type="GVNIC"
+      placement_policy:
+        type: COMPACT
+      reservation_affinity:
+        consume_reservation_type: SPECIFIC_RESERVATION
+        specific_reservations:
+        - name: $(vars.reservation_8x16)
+      tpu_topology: 8x16
+
+  # Node Pool for v6e-64 (8x8) - 4 slices
+  - id: pool-8x8
+    source: modules/compute/gke-node-pool
+    use: [gke-cluster, node_pool_service_account]
+    settings:
+      num_slices: 4
+      name: pool-8x8
+      disk_type: hyperdisk-balanced
+      machine_type: ct6e-standard-4t
+      auto_upgrade: true
+      zones: [$(vars.zone)]
+      disk_size_gb: $(vars.v6e_node_pool_disk_size_gb)
+      static_node_count: 16 # 64 chips / 4 chips per node
+      additional_networks:
+      - network=net-1.network_name
+        subnetwork=net-1.subnetwork_name
+        subnetwork_project=vars.project_id
+        nic_type="GVNIC"
+      placement_policy:
+        type: COMPACT
+      reservation_affinity:
+        consume_reservation_type: SPECIFIC_RESERVATION
+        specific_reservations:
+        - name: $(vars.reservation_8x8)
+      tpu_topology: 8x8
+
+  - id: workload-manager-install
+    source: modules/management/kubectl-apply
+    use: [gke-cluster]
+    settings:
+      kueue:
+        install: true
+        config_path: $(vars.kueue_configuration_path)
+      jobset:
+        install: true

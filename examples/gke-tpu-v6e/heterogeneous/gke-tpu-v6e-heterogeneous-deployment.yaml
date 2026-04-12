@@ -1,0 +1,39 @@
+# Copyright 2026 "Google LLC"
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+blueprint_name: gke-tpu-v6e-heterogeneous
+
+vars:
+  # Your GCP Project ID
+  project_id: <YOUR-PROJECT-ID>
+
+  # This should be unique across all of your Cluster
+  # Toolkit Deployments.
+  deployment_name: gke-tpu-v6e-het
+
+  # The GCP Region used for this deployment.
+  region: us-central1
+
+  # The GCP Zone used for this deployment.
+  zone: us-central1-c
+
+  # Cidr block containing the IP of the machine calling terraform.
+  # To allow all (IAM restrictions still enforced), use 0.0.0.0/0
+  # To allow only your IP address, use <YOUR-IP-ADDRESS>/32
+  authorized_cidr: 0.0.0.0/0
+
+  # Reservation names for each topology (Fill these in)
+  reservation_16x16: <YOUR-16x16-RESERVATION-NAME>
+  reservation_8x16: <YOUR-8x16-RESERVATION-NAME>
+  reservation_8x8: <YOUR-8x8-RESERVATION-NAME>
