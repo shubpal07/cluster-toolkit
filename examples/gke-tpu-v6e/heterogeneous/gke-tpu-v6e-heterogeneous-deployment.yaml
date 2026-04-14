@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-blueprint_name: gke-tpu-v6e-heterogeneous
+terraform_backend_defaults:
+  type: gcs
+  configuration:
+    # The GCS bucket used for storing terraform state
+    bucket:
 
 vars:
   # Your GCP Project ID

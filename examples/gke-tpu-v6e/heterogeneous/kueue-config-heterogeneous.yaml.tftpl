@@ -18,8 +18,12 @@ metadata:
   name: tpu-v6e-8x8
 spec:
   nodeLabels:
-    cloud.google.com/gke-tpu-accelerator: tpu-v6e
+    cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
     cloud.google.com/gke-tpu-topology: 8x8
+  nodeTaints:
+  - key: google.com/tpu
+    effect: NoSchedule
+    value: present
 ---
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ResourceFlavor
@@ -27,8 +31,12 @@ metadata:
   name: tpu-v6e-8x16
 spec:
   nodeLabels:
-    cloud.google.com/gke-tpu-accelerator: tpu-v6e
+    cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
     cloud.google.com/gke-tpu-topology: 8x16
+  nodeTaints:
+  - key: google.com/tpu
+    effect: NoSchedule
+    value: present
 ---
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ResourceFlavor
@@ -36,8 +44,12 @@ metadata:
   name: tpu-v6e-16x16
 spec:
   nodeLabels:
-    cloud.google.com/gke-tpu-accelerator: tpu-v6e
+    cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
     cloud.google.com/gke-tpu-topology: 16x16
+  nodeTaints:
+  - key: google.com/tpu
+    effect: NoSchedule
+    value: present
 ---
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: ClusterQueue
@@ -71,3 +83,69 @@ metadata:
   name: multislice-queue
 spec:
   clusterQueue: cluster-queue
+---
+# XPK Standard PriorityClasses
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: very-low
+value: 100
+globalDefault: false
+description: "Very Low"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low
+value: 250
+globalDefault: false
+description: "Low"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: medium
+value: 500
+globalDefault: false
+description: "Medium"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high
+value: 750
+globalDefault: false
+description: "High"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: very-high
+value: 1000
+globalDefault: false
+description: "Very High"
+---
+# XPK DWS Admission Checks (Included for completeness, applicable if using DWS)
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: AdmissionCheck
+metadata:
+  name: dws-prov
+spec:
+  controllerName: kueue.x-k8s.io/provisioning-request
+  parameters:
+    apiGroup: kueue.x-k8s.io
+    kind: ProvisioningRequestConfig
+    name: dws-config
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ProvisioningRequestConfig
+metadata:
+  name: dws-config
+spec:
+  provisioningClassName: queued-provisioning.gke.io
+  podSetUpdates:
+    nodeSelector:
+    - key: autoscaling.gke.io/provisioning-request
+      valueFromProvisioningClassDetail: ResizeRequestName
+  managedResources:
+  - google.com/tpu
