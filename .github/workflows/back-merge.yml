@@ -1,0 +1,75 @@
+# Copyright 2026 "Google LLC"
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Automated Back-Merge
+
+on:
+  push:
+    branches:
+    - test-main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  back-merge:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Merge test-main into test-develop
+      run: |
+        # Fetch all remote branches
+        git fetch origin test-develop:test-develop
+        git checkout test-develop
+
+        echo "Attempting to merge test-main into test-develop..."
+        if git merge origin/test-main --no-edit; then
+          echo "Merge successful. Pushing changes back to test-develop..."
+          git push origin test-develop
+        else
+          echo "ERROR: Merge conflict occurred during back-merge."
+          echo "Creating a conflict PR to resolve manually..."
+
+          # Create a unique branch name for the conflict resolution
+          CONFLICT_BRANCH="conflict/back-merge-test-main-to-test-develop-${GITHUB_RUN_ID}"
+          git checkout -b "$CONFLICT_BRANCH"
+
+          # Commit the conflict state if needed, or push the desynced branch.
+          git merge --abort
+
+          git checkout test-main
+          git checkout -b "$CONFLICT_BRANCH"
+
+          # Push conflict branch
+          git push origin "$CONFLICT_BRANCH"
+
+          # Create Pull Request using GitHub CLI
+          gh pr create \
+            --title "Resolve Back-Merge Conflict: test-main -> test-develop" \
+            --body "Automated back-merge failed due to conflicts. Please resolve manually by merging this PR into test-develop." \
+            --base test-develop \
+            --head "$CONFLICT_BRANCH"
+
+          exit 1
+        fi

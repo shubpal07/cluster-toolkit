@@ -30,11 +30,19 @@ GIT_INITIAL_HASH=$(shell git rev-list --max-parents=0 HEAD)
 endif
 endif
 
+TOOLKIT_VERSION := $(GIT_TAG_VERSION)
+ifeq ($(TOOLKIT_VERSION),)
+  TOOLKIT_VERSION := $(GIT_COMMIT_INFO)
+endif
+ifeq ($(TOOLKIT_VERSION),)
+  TOOLKIT_VERSION := v0.0.0-dev
+endif
+
 # RULES MEANT TO BE USED DIRECTLY
 
 gcluster: warn-go-version warn-terraform-version warn-packer-version $(shell find ./cmd ./pkg gcluster.go -type f)
 	$(info **************** building gcluster ************************)
-	@go build -ldflags="-X 'main.gitTagVersion=$(GIT_TAG_VERSION)' -X 'main.gitBranch=$(GIT_BRANCH)' -X 'main.gitCommitInfo=$(GIT_COMMIT_INFO)' -X 'main.gitCommitHash=$(GIT_COMMIT_HASH)' -X 'main.gitInitialHash=$(GIT_INITIAL_HASH)' -X 'main.gitIsOfficial=$(GIT_IS_OFFICIAL)' -X 'main.installationMode=$(INSTALLATION_MODE)'" gcluster.go
+	@go build -ldflags="-X 'main.gitTagVersion=$(GIT_TAG_VERSION)' -X 'main.gitBranch=$(GIT_BRANCH)' -X 'main.gitCommitInfo=$(GIT_COMMIT_INFO)' -X 'main.gitCommitHash=$(GIT_COMMIT_HASH)' -X 'main.gitInitialHash=$(GIT_COMMIT_HASH)' -X 'main.gitIsOfficial=$(GIT_IS_OFFICIAL)' -X 'main.installationMode=$(INSTALLATION_MODE)' -X 'hpc-toolkit/pkg/config.latestToolkitVersion=$(TOOLKIT_VERSION)'" gcluster.go
 	@ln -sf gcluster ghpc
 
 ghpc: gcluster
