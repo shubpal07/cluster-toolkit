@@ -28,3 +28,4 @@ terraform {
   required_version = ">= 1.12.2"
 }
 # Bug fix in release
+# Hotfix P0 critical patch
