@@ -43,11 +43,12 @@ import (
 )
 
 const (
-	maxHintDist          int = 3 // Maximum Levenshtein distance where we suggest a hint
-	latestToolkitVersion     = "v1.98.0"
+	maxHintDist int = 3 // Maximum Levenshtein distance where we suggest a hint
 	// SharedModulesDirName is the name of the shared directory for embedded modules
 	SharedModulesDirName = "_modules"
 )
+
+var latestToolkitVersion = "v1.98.0"
 
 // map[moved module path]replacing module path
 var movedModules = map[string]string{

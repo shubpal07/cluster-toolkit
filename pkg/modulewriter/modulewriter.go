@@ -120,6 +120,11 @@ func WriteDeployment(bp config.Blueprint, deploymentDir string) error {
 			return fmt.Errorf("error trying to restore terraform state: %w", err)
 		}
 	}
+
+	if err := ReplaceVersionPlaceholders(deploymentDir, config.GetToolkitVersion()); err != nil {
+		return fmt.Errorf("failed to replace version placeholders: %w", err)
+	}
+
 	return nil
 }
 
