@@ -16,9 +16,10 @@
 
 # This file is meant to be reused by multiple modules.
 # "inputs":
-# local.native_fstype : list of file systems that are supported automatically, but looking at the metadata.
-# var.network_storage : to be passed into metadata somewhere else (not here)
-# var.startup_script  : to be changed into a more complete file system with all the fs runners
+# local.native_fstype                 : list of file systems that are supported automatically, but looking at the metadata.
+# local.startup_script_bucket_viewers : IAM member strings granted read-only access to the startup script bucket.
+# var.network_storage                 : to be passed into metadata somewhere else (not here)
+# var.startup_script                  : to be changed into a more complete file system with all the fs runners
 
 # "outputs":
 # local.startup_from_network_storage : A full startup script with all the runners that are not supported
@@ -69,4 +70,5 @@ module "netstorage_startup_script" {
   region          = var.region
   runners         = local.full_runner_list
   gcs_bucket_path = local.startup_script_gcs_bucket_path
+  bucket_viewers  = local.startup_script_bucket_viewers
 }

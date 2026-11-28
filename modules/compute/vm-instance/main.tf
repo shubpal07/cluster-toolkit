@@ -31,6 +31,11 @@ locals {
   guest_accelerator = module.gpu.guest_accelerator
 
   native_fstype = []
+  startup_script_bucket_viewers = (
+    var.service_account_email != null && var.service_account_email != ""
+    ? ["serviceAccount:${var.service_account_email}"]
+    : []
+  )
   startup_script = local.startup_from_network_storage != null ? (
   { startup-script = local.startup_from_network_storage }) : {}
   network_storage = var.network_storage != null ? (

@@ -21,7 +21,7 @@ vars:
   # via `--vars key1=value1,key2=value2`, or be added to a deployment.yaml file
   # and used with `gcluster deploy -d deployment.yaml <this-file>`
   project_id: # supply project ID
-  deployment_name: a4high-vm
+  deployment_name: a4high-vm # 3-27 chars so <deployment_name>-vm stays <= 30 chars
   region: # Supply region
   zone: # Supply zone
   a4h_reservation_name: # supply reservation name
@@ -42,6 +42,12 @@ vars:
   # Optional overrides (defaults shown)
   # Size in GB of the /home Filestore instance.
   homefs_size_gb: 10240
+  # Off by default; set to true to install and start diagon-daemon.service at
+  # boot and grant Google Cloud ML Diagnostics IAM permissions.
+  # VMs always use a dedicated service account (<deployment_name>-vm) instead of
+  # the default Compute Engine service account; workloads relying on extra
+  # default service account permissions need those roles added to vm_sa.
+  enable_ml_diagnostics_daemon: false
 
 deployment_groups:
 - group: primary
@@ -104,9 +110,33 @@ deployment_groups:
     outputs:
     - network_storage
 
+  - id: project
+    source: community/modules/project/pre-existing-project
+
+  - id: vm_sa
+    source: modules/project/service-account
+    settings:
+      name: vm
+      project_roles: >-
+        $(concat(["logging.logWriter", "monitoring.metricWriter"],
+        vars.enable_ml_diagnostics_daemon ? ["hypercomputecluster.editor"] : []))
+      conditional_project_roles: >-
+        $(vars.enable_ml_diagnostics_daemon ? [
+        {role = "storage.objectUser",
+        title = "ml-diagnostics-default-bucket",
+        description = "Read and write objects in default regional ML Diagnostics buckets.",
+        expression = "resource.name.startsWith(\"projects/_/buckets/diagon-${project.project_number}-${vars.region}-\")"},
+        {role = "storage.bucketViewer",
+        title = "ml-diagnostics-default-bucket",
+        description = "Inspect default regional ML Diagnostics buckets.",
+        expression = "resource.name.startsWith(\"projects/_/buckets/diagon-${project.project_number}-${vars.region}-\")"}
+        ] : [])
+
   - id: startup-script
     source: modules/scripts/startup-script
     settings:
+      enable_ml_diagnostics_daemon: $(vars.enable_ml_diagnostics_daemon)
+      bucket_viewers: [$(vm_sa.service_account_iam_email)]
       configure_ssh_host_patterns:
       - $(vars.hostname_prefix)-*
       local_ssd_filesystem:
@@ -322,7 +352,7 @@ deployment_groups:
 
   - id: a4high-vms
     source: modules/compute/vm-instance
-    use: [startup-script, homefs]
+    use: [startup-script, homefs, vm_sa]
     settings:
       # Hardware-locked: the multi-NIC RDMA/GPUDirect networking and accelerator
       # settings in this blueprint are specific to this shape. To use a different

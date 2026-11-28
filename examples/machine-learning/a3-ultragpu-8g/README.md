@@ -90,6 +90,20 @@ APIs and IAM permissions, and build `./gcluster` from the root of the repository
 test -x ./gcluster || make
 ```
 
+### Enable Required GCP APIs
+
+Enable the APIs required to deploy the standalone VM blueprint (including `cloudresourcemanager.googleapis.com`):
+
+```bash
+gcloud services enable \
+  cloudresourcemanager.googleapis.com \
+  compute.googleapis.com \
+  file.googleapis.com \
+  iam.googleapis.com \
+  storage.googleapis.com \
+  --project=<PROJECT_ID>
+```
+
 ### (Optional, but recommended) Create a GCS Bucket for storing terraform state
 
 ```bash
@@ -132,12 +146,72 @@ vars:
   number_of_vms: <RESERVATION_SIZE>
 ```
 
+**Note:** VMs always use a dedicated `<deployment_name>-vm` service account
+instead of the default Compute Engine service account. Keep `deployment_name`
+between 3 and 27 characters so `<deployment_name>-vm` stays within Google
+Cloud's 30-character service account ID limit.
+
 ### Deploy the VMs
 
 ```bash
 #!/bin/bash
 ./gcluster deploy -d examples/machine-learning/a3-ultragpu-8g/a3ultra-vm-deployment.yaml examples/machine-learning/a3-ultragpu-8g/a3ultra-vm.yaml
 ```
+
+### Google Cloud ML Diagnostics (Optional)
+
+Set `enable_ml_diagnostics_daemon: true` in `a3ultra-vm-deployment.yaml` to
+install and start `diagon-daemon.service` on VMs at boot and grant the IAM
+permissions used by Google Cloud ML Diagnostics:
+
+* `roles/hypercomputecluster.editor` on the project.
+* `roles/storage.objectUser` and `roles/storage.bucketViewer` scoped to the
+  default regional bucket prefix `diagon-<project_number>-<region>-`.
+
+#### Prerequisites
+
+Enable the Google Cloud ML Diagnostics, Logging, and Monitoring APIs in
+addition to the required blueprint APIs listed above (including
+`cloudresourcemanager.googleapis.com`):
+
+```bash
+gcloud services enable \
+  hypercomputecluster.googleapis.com \
+  logging.googleapis.com \
+  monitoring.googleapis.com \
+  --project=<PROJECT_ID>
+```
+
+Perform the one-time setup to enable Log Analytics on the project's `_Default`
+Cloud Logging bucket before running diagnostics jobs:
+
+```bash
+gcloud logging buckets update _Default \
+  --location=global \
+  --enable-analytics \
+  --project=<PROJECT_ID>
+```
+
+VMs also require outbound HTTPS access to `us-central1-apt.pkg.dev`,
+`packages.cloud.google.com`, and `<region>-agentcommunication.googleapis.com`
+to install and run the daemon.
+
+#### Notes
+
+* **Dedicated service account:** VMs always use a dedicated service account
+  (`<deployment_name>-vm`) instead of the default Compute Engine service
+  account, even when `enable_ml_diagnostics_daemon` is `false`. Keep
+  `deployment_name` between 3 and 27 characters (`<= 27`) so
+  `<deployment_name>-vm` stays within Google Cloud's 30-character service
+  account ID limit. If your workloads rely on extra default service account
+  permissions, add those roles to `vm_sa`.
+* **Live on-demand profiling:** Standalone VM jobs use the Google Cloud ML
+  Diagnostics Python SDK (`on_demand_xprof=True` / port `9999`) for live
+  on-demand profiling.
+* **Non-root GPU profiling:** Standard on-demand XProf traces work for non-root
+  users under the default NVIDIA driver settings; workloads that read hardware
+  performance counters or PC samples require root (`CAP_SYS_ADMIN`) or setting
+  `NVreg_RestrictProfilingToAdminUsers=0` (requires a reboot).
 
 ### Destroy the VMs
 

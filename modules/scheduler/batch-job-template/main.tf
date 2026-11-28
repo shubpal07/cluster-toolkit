@@ -67,7 +67,13 @@ locals {
   subnetwork_project = var.subnetwork != null ? var.subnetwork.project : var.project_id
 
   # Filter network_storage for native Batch support
-  native_fstype = var.native_batch_mounting ? ["nfs"] : []
+  native_fstype         = var.native_batch_mounting ? ["nfs"] : []
+  service_account_email = try(var.service_account.email, null)
+  startup_script_bucket_viewers = (
+    local.service_account_email != null && local.service_account_email != ""
+    ? ["serviceAccount:${local.service_account_email}"]
+    : []
+  )
   native_batch_network_storage = [
     for ns in var.network_storage :
     ns if contains(local.native_fstype, ns.fs_type)

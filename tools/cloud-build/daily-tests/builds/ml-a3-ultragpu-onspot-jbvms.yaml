@@ -17,6 +17,8 @@ tags:
 - vm
 - m.filestore
 - m.gpu-rdma-vpc
+- m.pre-existing-project
+- m.service-account
 - m.startup-script
 - m.vpc
 - m.vm-instance

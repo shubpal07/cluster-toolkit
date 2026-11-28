@@ -19,7 +19,7 @@ terraform_backend_defaults:
     bucket: # supply existing bucket to store Terraform state
 
 vars:
-  deployment_name: a3-ultra-vm # supply unique deployment name
+  deployment_name: a3-ultra-vm # supply unique deployment name (3-27 chars)
   project_id: # supply existing project id
   region: # supply region with a3-ultragpu-8g capacity in reservation
   zone: # supply zone with a3-ultragpu-8g capacity in reservation
@@ -29,3 +29,4 @@ vars:
 
 ## --- Optional overrides (defaults shown) ---
   # homefs_size_gb: 2560
+  # enable_ml_diagnostics_daemon: false
