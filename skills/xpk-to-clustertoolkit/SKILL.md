@@ -21,8 +21,12 @@ description: >
 compatibility: "Requires python3, gcluster, and Cluster Toolkit blueprints."
 metadata:
   author: GoogleCloudPlatform
+  support: core
   status: experimental
+  mode: gated
   domain: migration
+  labels:
+    - skip-tool-checks
 allowed-tools: Bash(python3:*) Bash(./gcluster explain:*) Bash(./gcluster expand:*) Bash(gcluster explain:*) Bash(gcluster expand:*) Bash(kubectl get:*) Bash(kubectl describe:*) Bash(cat:*) Bash(ls:*) Bash(find:*) Bash(git status:*)
 ---
 

@@ -371,6 +371,13 @@ Common deployment failures:
 - **Project Access**: Ensure your account has the necessary roles in the IAM section of the console.
 - **Filestore resource limit**: If you see "System limit for internal resources has been reached," see the [Filestore troubleshooting guide](https://cloud.google.com/filestore/docs/troubleshooting#system_limit_for_internal_resources_has_been_reached_error_when_creating_an_instance) for the solution.
 
+### AI-assisted troubleshooting (Agent Skills)
+
+Cluster Toolkit supports open, portable **Agent Skills** following the [agentskills.io](https://agentskills.io) specification for coding agents such as Gemini CLI, Claude Code, Codex, Cursor, and GitHub Copilot.
+
+- **Core Skills**: Official playbooks maintained by the Cluster Toolkit team. See the [Core Skills Guide](skills/README.md).
+- **Community Skills**: Open hub for partner- and community-authored skills. See the [Community Skills Guide](community/skills/README.md).
+
 ## Development
 
 > [!NOTE]

@@ -34,6 +34,7 @@ locals {
     "docs/migration/xpk_to_clustertoolkit.md",
     "pkg/catalog/**",
     "skills/**",
+    "community/skills/**",
     "tools/catalog-gen/**",
     "tools/run_eval.py",
     "tools/skills_eval/**",
@@ -45,6 +46,7 @@ locals {
   ]
   skills_eval_ignored_files = [
     "skills/README.md",
+    "community/skills/README.md",
     "skills/**/references/catalog.yaml",
     "tools/skills_eval/README.md",
     "tools/cloud-build/provision/README.md",

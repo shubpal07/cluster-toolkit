@@ -591,7 +591,7 @@ def validate_module_readme_snippets(non_ignored: set[str] | None = None) -> list
         }
         | set(
             _find_markdown_files_under(
-                ("docs", "examples", "community/examples", "community/front-end", "skills"),
+                ("docs", "examples", "community/examples", "community/front-end", "skills", "community/skills"),
                 non_ignored,
             )
         )

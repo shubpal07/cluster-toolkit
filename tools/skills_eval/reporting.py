@@ -38,6 +38,7 @@ from .schema_lint import (
     EvalResult,
     REPO_ROOT,
     TestCaseResult,
+    _extract_skill_metadata,
     _write_file,
     filter_cases,
     normalize_case,
@@ -63,10 +64,13 @@ def evaluate_skill(
         return EvalResult(skill_name, False, f"Missing {eval_yaml_path}")
     try:
         eval_data = yaml.safe_load(Path(eval_yaml_path).read_text(encoding="utf-8"))
-    except yaml.YAMLError as e:
+    except (UnicodeDecodeError, yaml.YAMLError, OSError) as e:
         return EvalResult(skill_name, False, f"EVAL.yaml parse error: {e}")
     if not isinstance(eval_data, dict) or not isinstance(eval_data.get("cases"), list) or not eval_data["cases"]:
         return EvalResult(skill_name, False, "EVAL.yaml must contain non-empty 'cases' list")
+    skill_mode, allowed_tools, skill_labels = _extract_skill_metadata(os.path.join(skill_path, "SKILL.md"))
+    skip_eval_safety = "skip-eval-safety-checks" in skill_labels
+    eff_mode = skill_mode or "gated"
     selected_cases = filter_cases(
         eval_data["cases"],
         cases_filter or (",".join(case_filter) if case_filter else None),
@@ -93,7 +97,13 @@ def evaluate_skill(
                 else backend.run_case(skill_name, prompt, case)
             )
             elapsed = round(elapsed + (time.time() - attempt_start), 4)
-            assert_ok, msg, fail_cat = _verify_assertions_categorized(simulated_text, case)
+            assert_ok, msg, fail_cat = _verify_assertions_categorized(
+                simulated_text,
+                case,
+                allowed_tools=allowed_tools,
+                skip_eval_safety_checks=skip_eval_safety,
+                mode=eff_mode,
+            )
             ok = assert_ok
             orc_cur = backend._get_oracle(cname, skill_name) if isinstance(backend, LiveCLIEvaluatorBackend) else None
             if orc_cur is not None:
@@ -185,6 +195,32 @@ def discover_skills(skills_dir: str) -> List[str]:
     return sorted(skills)
 
 
+def discover_all_skills(
+    core_dir: str = "skills",
+    community_dir: str = "community/skills",
+    include_core: bool = True,
+    include_community: bool = True,
+) -> List[str]:
+    """Discover skills across core and community roots with global skill-name collision detection."""
+    all_skills: List[str] = []
+    seen: Dict[str, str] = {}
+    roots = [
+        d for flag, d in ((include_core, core_dir), (include_community, community_dir))
+        if flag and d and os.path.isdir(d)
+    ]
+    for root_dir in dict.fromkeys(roots):
+        for sp in discover_skills(root_dir):
+            sname = os.path.basename(os.path.normpath(sp))
+            if sname in seen and os.path.realpath(seen[sname]) != os.path.realpath(sp):
+                raise ValueError(
+                    f"Duplicate skill name '{sname}' detected across skill roots: "
+                    f"'{seen[sname]}' and '{sp}'. Skill names must be globally unique across skills/ and community/skills/."
+                )
+            seen[sname] = sp
+            all_skills.append(sp)
+    return sorted(all_skills)
+
+
 _GLOBAL_EVAL_TRIGGERS = frozenset({
     "AGENTS.md",
     "CLAUDE.md",
@@ -205,18 +241,38 @@ _SKILL_SPECIFIC_TRIGGER_PREFIXES = (
 )
 
 
-def resolve_changed_skills(base_ref: str, skills_dir: str = "skills", repo_root: Optional[str] = None) -> Optional[List[str]]:
-    """Return sorted skill paths impacted since base_ref, [] if none, or None to fall back to all skills."""
+def _norm_root_prefix(raw_dir: str, root: str, default_prefix: str) -> Tuple[str, str]:
+    abs_d = os.path.abspath(raw_dir if os.path.isabs(raw_dir) else os.path.join(root, raw_dir))
+    rel = os.path.relpath(abs_d, root).replace("\\", "/").strip("/")
+    prefix = default_prefix if (rel.startswith("..") or not rel or rel == ".") else f"{rel}/"
+    return abs_d, prefix
+
+
+def resolve_changed_skills(
+    base_ref: str,
+    skills_dir: str = "skills",
+    repo_root: Optional[str] = None,
+    community_dir: Optional[str] = "community/skills",
+) -> Optional[List[str]]:
+    """Return sorted skill paths impacted since base_ref across core & community roots, [] if none, or None to fall back."""
     ref = (base_ref or "").strip()
     if not ref:
         return None
     root = os.path.abspath(repo_root or REPO_ROOT)
-    skills_root_abs = os.path.abspath(skills_dir if os.path.isabs(skills_dir) else os.path.join(root, skills_dir))
-    rel_prefix = os.path.relpath(skills_root_abs, root).replace("\\", "/").strip("/")
-    if rel_prefix.startswith("..") or not rel_prefix or rel_prefix == ".":
-        skills_prefix = "skills/"
-    else:
-        skills_prefix = f"{rel_prefix}/"
+    skills_root_abs, skills_prefix = _norm_root_prefix(skills_dir, root, "skills/")
+    watched_roots: List[Tuple[str, str, str]] = [(skills_dir, skills_root_abs, skills_prefix)]
+    ignored_docs = {
+        f"{skills_prefix}README.md",
+        "skills/README.md",
+        "community/skills/README.md",
+        "tools/skills_eval/README.md",
+        "tools/cloud-build/provision/README.md",
+    }
+    if community_dir:
+        comm_root_abs, comm_prefix = _norm_root_prefix(community_dir, root, "community/skills/")
+        if comm_root_abs != skills_root_abs:
+            watched_roots.append((community_dir, comm_root_abs, comm_prefix))
+            ignored_docs.add(f"{comm_prefix}README.md")
 
     def _git_q(gargs: List[str]) -> "subprocess.CompletedProcess[str]":
         return subprocess.run(["git", *gargs], cwd=root, capture_output=True, text=True, check=False)
@@ -238,14 +294,7 @@ def resolve_changed_skills(base_ref: str, skills_dir: str = "skills", repo_root:
         return None
     impacted: Set[str] = set()
     for p in changed:
-        if p in (
-            f"{skills_prefix}README.md",
-            "skills/README.md",
-            "tools/skills_eval/README.md",
-            "tools/cloud-build/provision/README.md",
-        ) or (
-            p.startswith(skills_prefix) and p.endswith("/references/catalog.yaml")
-        ):
+        if p in ignored_docs or (p.startswith(skills_prefix) and p.endswith("/references/catalog.yaml")):
             continue
         if p in _GLOBAL_EVAL_TRIGGERS or p.startswith(_GLOBAL_EVAL_TRIGGER_PREFIXES):
             return None
@@ -262,20 +311,22 @@ def resolve_changed_skills(base_ref: str, skills_dir: str = "skills", repo_root:
                 impacted.add(os.path.normpath(os.path.join(skills_dir, matched_skill)))
                 continue
             return None
-        if p.startswith(skills_prefix):
-            cur = os.path.abspath(os.path.dirname(os.path.join(root, p)))
-            found = ""
-            while cur.startswith(skills_root_abs + os.sep):
-                if os.path.isfile(os.path.join(cur, "SKILL.md")):
-                    found = os.path.normpath(os.path.join(skills_dir, os.path.relpath(cur, skills_root_abs)))
-                    break
-                parent = os.path.dirname(cur)
-                if parent == cur:
-                    break
-                cur = parent
-            if not found:
-                return None
-            impacted.add(found)
+        for raw_dir, root_abs, prefix in watched_roots:
+            if p.startswith(prefix):
+                cur = os.path.abspath(os.path.dirname(os.path.join(root, p)))
+                found = ""
+                while cur.startswith(root_abs + os.sep):
+                    if os.path.isfile(os.path.join(cur, "SKILL.md")):
+                        found = os.path.normpath(os.path.join(raw_dir, os.path.relpath(cur, root_abs)))
+                        break
+                    parent = os.path.dirname(cur)
+                    if parent == cur:
+                        break
+                    cur = parent
+                if not found:
+                    return None
+                impacted.add(found)
+                break
     return sorted(impacted)
 
 
@@ -287,7 +338,7 @@ def skills_need_gcluster(skill_paths: List[str], cases_arg: Optional[str] = None
             continue
         try:
             data = yaml.safe_load(Path(ep).read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
+        except (UnicodeDecodeError, yaml.YAMLError, OSError):
             continue
         if not isinstance(data, dict):
             continue
@@ -391,12 +442,16 @@ def report_to_dict(eval_results: List[EvalResult], backend: Optional[EvaluatorBa
                 "latency_seconds": tc.latency_seconds,
                 "oracles": asdict(orc) if orc else {},
             }
-    return {
+    report: Dict[str, Any] = {
         "metadata": full_meta,
         "skills": [{"skill_name": r.skill_name, "passed": r.passed, "message": r.message} for r in eval_results],
         "cases": cases_map,
         "summary": _extract_normalized_cases_and_summary({"cases": cases_map})[1],
     }
+    audits = getattr(backend, "semantic_audits", None) if backend is not None else None
+    if isinstance(audits, dict) and audits:
+        report["semantic_safety_audit"] = dict(audits)
+    return report
 
 
 _SCORECARD_METRICS = (
@@ -456,6 +511,32 @@ def generate_live_scorecard_markdown(report_data: Dict[str, Any]) -> str:
             f"{float(c.get('latency_seconds', 0.0) or 0.0):.1f}s", verdict,
         ]
         lines.append("| " + " | ".join(row) + " |")
+    audits = report_data.get("semantic_safety_audit")
+    if isinstance(audits, dict) and audits:
+        lines.extend([
+            "",
+            "### 3. Semantic Skill Safety Audit (Advisory)",
+            "",
+            "| Skill | Verdict | Files Audited | Findings |",
+            "| :--- | :--- | :--- | :--- |",
+        ])
+        for sname, entry in sorted(audits.items()):
+            if not isinstance(entry, dict):
+                continue
+            status_lbl = sanitize_markdown_cell(str(entry.get("status") or entry.get("verdict") or "WARN"))
+            files_list = entry.get("files_audited") or []
+            files_cell = sanitize_markdown_cell(", ".join(str(f) for f in files_list) + (" (truncated)" if entry.get("truncated") else ""))
+            findings = entry.get("findings") if isinstance(entry.get("findings"), list) else []
+            if entry.get("error"):
+                detail = f"Audit error: {entry['error']}"
+            elif not findings:
+                detail = "None"
+            else:
+                detail = "; ".join(
+                    f"[{str(f.get('severity', 'MEDIUM')).upper()}] {f.get('file', 'SKILL.md')}: {f.get('reason', '')}"
+                    for f in findings if isinstance(f, dict)
+                )
+            lines.append(f"| `{sanitize_markdown_cell(sname)}` | {status_lbl} | {files_cell or 'n/a'} | {sanitize_markdown_cell(detail)} |")
     return "\n".join(lines) + "\n"
 
 

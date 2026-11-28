@@ -22,17 +22,17 @@ description: >
 compatibility: "Requires the gcluster binary (built from this repo via `make`) and a Cluster Toolkit checkout."
 metadata:
   author: GoogleCloudPlatform
+  support: core
   status: experimental
+  mode: gated
   domain: blueprints
 allowed-tools: Bash(make) Bash(./gcluster explain:*) Bash(./gcluster expand:*) Bash(./gcluster create:*) Bash(gcluster explain:*) Bash(gcluster expand:*) Bash(gcluster create:*)
 allowed_read_only_commands:
   - "make"
   - "./gcluster explain"
   - "./gcluster expand"
-  - "./gcluster create"
   - "gcluster explain"
   - "gcluster expand"
-  - "gcluster create"
 ---
 
 # Cluster Toolkit Blueprint Assistant
