@@ -349,7 +349,9 @@ class LiveCLIEvaluatorBackend:
             atexit.register(self._cleanup_trusted_folders)
         self.oracles: Dict[str, LiveOracles] = {}
         self._pre_session_files: Dict[str, Dict[str, Tuple[int, int, str]]] = {}
-        self.gemini_tmp_dir, self._bin_cache_dir = None, tempfile.gettempdir()
+        self.gemini_tmp_dir = None
+        self._bin_cache_dir = tempfile.mkdtemp(prefix="ctk-bin-cache-")
+        atexit.register(shutil.rmtree, self._bin_cache_dir, ignore_errors=True)
         self._git_lock, self._build_lock, self._print_lock = threading.Lock(), threading.Lock(), threading.Lock()
 
     def _ensure_audit_dir(self, wt: str) -> str:
@@ -425,6 +427,8 @@ class LiveCLIEvaluatorBackend:
         if shim_dir and audit_dir:
             if not env.get("GOOGLE_APPLICATION_CREDENTIALS") and os.path.isfile(adc):
                 env["GOOGLE_APPLICATION_CREDENTIALS"] = adc
+            for secret_var in ("CLOUDSDK_AUTH_ACCESS_TOKEN", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", "GITHUB_TOKEN", "GH_TOKEN"):
+                env.pop(secret_var, None)
             gcloud_cfg = os.path.join(audit_dir, "gcloud_config")
             if os.path.isdir(audit_dir):
                 os.makedirs(gcloud_cfg, mode=0o700, exist_ok=True)
@@ -453,6 +457,14 @@ class LiveCLIEvaluatorBackend:
             proc.kill()
             out, err = proc.communicate()
             raise subprocess.TimeoutExpired(cmd, timeout or 0, output=out, stderr=err)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            with contextlib.suppress(OSError):
+                proc.kill()
+            with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                proc.communicate(timeout=2)
+            raise
         return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
     def _git(self, args: List[str], cwd: str) -> "subprocess.CompletedProcess[str]":

@@ -43,7 +43,7 @@ steps:
       git remote add origin \
         https://github.com/GoogleCloudPlatform/cluster-toolkit.git
     fi
-    RAW_BASE="${_BASE_BRANCH}"
+    RAW_BASE="$${_BASE_BRANCH:-}"
     TARGET_BASE="$${BASE_BRANCH:-$${RAW_BASE:-develop}}"
     git fetch --no-tags origin \
       "+refs/heads/$${TARGET_BASE}:refs/remotes/origin/$${TARGET_BASE}" \
@@ -52,12 +52,12 @@ steps:
       git fetch --no-tags origin "+refs/heads/main:refs/remotes/origin/main" \
         || echo "[WARN] Failed to fetch fallback branch 'main' from origin" >&2
     fi
-    if [ -n "${_COMPARE_REF}" ]; then
+    if [ -n "$${_COMPARE_REF:-}" ]; then
       git fetch --no-tags origin \
         "+refs/heads/*:refs/remotes/origin/*" "+refs/tags/*:refs/tags/*"
-      REF="${_COMPARE_REF}"
+      REF="$${_COMPARE_REF}"
       git rev-parse --verify "$${REF}^{commit}" >/dev/null 2>&1 \
-        || git fetch --no-tags origin "$${REF#origin/}" || true
+        || git fetch --no-tags origin -- "$${REF#origin/}" || true
     fi
 - id: skills-live-eval
   waitFor: [git-prepare-workspace]

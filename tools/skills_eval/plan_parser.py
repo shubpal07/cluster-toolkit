@@ -53,8 +53,18 @@ def build_command_pattern(command_str: str) -> re.Pattern:
     if not raw_tokens:
         return re.compile(r"$^")
     tokens, head = [re.escape(t) for t in raw_tokens], raw_tokens[0].lower().lstrip("./\\")
-    sep = r"\b[^;&|\n`()#]{1,250}?\b" if len(tokens) > 1 and head in ("kubectl", "scontrol", "gcloud", "terraform", "helm", "ghpc", "gcluster") else r"\s+"
-    return re.compile(rf"(?:^|[\s\"'`;|&$()\[\]*~></\\]){tokens[0] if len(tokens) == 1 else sep.join(tokens)}(?:$|[\s\"'`;|&$()\[\]*~><.,:!?])", re.IGNORECASE)
+    if len(tokens) == 1:
+        body = tokens[0]
+    elif head in ("kubectl", "scontrol", "gcloud", "terraform", "helm", "ghpc", "gcluster"):
+        parts = [tokens[0]]
+        for prev, nxt, nxt_esc in zip(raw_tokens, raw_tokens[1:], tokens[1:]):
+            left_b = r"\b" if (prev[-1].isalnum() or prev[-1] == "_") else r"(?=\s)"
+            right_b = r"\b" if (nxt[0].isalnum() or nxt[0] == "_") else r"(?<=\s)"
+            parts.append(f"{left_b}[^;&|\\n`()#]{{1,250}}?{right_b}{nxt_esc}")
+        body = "".join(parts)
+    else:
+        body = r"\s+".join(tokens)
+    return re.compile(rf"(?:^|[\s\"'`;|&$()\[\]*~></\\]){body}(?:$|[\s\"'`;|&$()\[\]*~><.,:!?])", re.IGNORECASE)
 
 
 def _is_close_fence(line: str, tok: str) -> bool:

@@ -260,6 +260,11 @@ class TestRunEval(unittest.TestCase):
         self.assertTrue(pat_gcloud.search("gcloud compute instances delete vm1") and pat_gcloud.search("gcloud --project=my-proj compute instances delete vm1") and not pat_gcloud.search("gcloud compute instances list"))
         long_flag = "--kubeconfig=/opt/clusters/very-long-cluster-name-with-many-subdomains-and-path-segments-and-nested-dirs/kubeconfig.yaml"
         self.assertTrue(pat_k8s.search(f"kubectl {long_flag} delete pod foo") and not pat_k8s.search(f"kubectl --flag={'a' * 260} delete pod foo") and pat_k8s.search("kubectl delete -n default pod my-pod"))
+        pat_kdel_f = build_command_pattern("kubectl delete -f")
+        self.assertTrue(pat_kdel_f.search("kubectl delete -f pod.yaml") and pat_kdel_f.search("kubectl -n ns delete --grace-period=0 -f pod.yaml"))
+        self.assertTrue(not pat_kdel_f.search("kubectl delete --force pod.yaml") and not pat_kdel_f.search("kubectl delete foo-f") and not pat_kdel_f.search("kubectl delete; echo -f"))
+        self.assertTrue(build_command_pattern("kubectl get -o yaml").search("kubectl get pods -n ns -o yaml") and build_command_pattern("gcluster deploy --auto-approve").search("gcluster deploy my-depl --auto-approve"))
+        self.assertTrue(build_command_pattern("kubectl apply -- -f").search("kubectl apply -- -f") and not build_command_pattern("kubectl apply -- -f").search("kubectl apply --foo -f"))
 
 
 class _FakeProc:
@@ -480,9 +485,6 @@ class TestLiveBackend(unittest.TestCase):
 
     def test_gcluster_built_from_repo_ref_when_not_head(self):
         """--repo-ref <old> must use a gcluster built from <old>, not the repo-root (After) binary."""
-        cached = os.path.join(tempfile.gettempdir(), f"ctk-live-gcluster-{os.getuid()}-beefbeefbeef")
-        if os.path.exists(cached):
-            os.remove(cached)
         self._write(os.path.join(self.repo, "gcluster"), "AFTER-BINARY")
         def exec_fn(cmd, cwd, env=None, timeout=None):
             self.calls.append((cmd, cwd, env, timeout))
@@ -493,12 +495,14 @@ class TestLiveBackend(unittest.TestCase):
             elif cmd[:2] == ["make", "gcluster"]:
                 self._write(os.path.join(cwd, "gcluster"), "BEFORE-BINARY")
             return _FakeProc(0)
+        b = self._backend(exec_fn, keep_worktrees=True, repo_ref="oldref")
+        cached = os.path.join(b._bin_cache_dir, f"ctk-live-gcluster-{os.getuid()}-beefbeefbeef")
         try:
-            b = self._backend(exec_fn, keep_worktrees=True, repo_ref="oldref")
             b.run_case("skill", "p", {"name": "r1"})
             wt = [c[0][4] for c in self.calls if c[0][:3] == ["git", "worktree", "add"]][0]
             self.assertEqual(Path(os.path.join(wt, LIVE_SHIM_DIR, "gcluster.real")).read_text(encoding="utf-8"), "BEFORE-BINARY")
             self.assertTrue(os.path.isfile(cached))
+            self.assertFalse(os.path.exists(os.path.join(tempfile.gettempdir(), os.path.basename(cached))))
             shutil.rmtree(wt, ignore_errors=True)
             self.calls.clear()
             b.run_case("skill", "p", {"name": "r2"})
@@ -712,7 +716,10 @@ class TestLiveBackend(unittest.TestCase):
         b = self._backend(self._fake_exec())
         adc_dir = os.path.join(self.repo, "fake-gcloud")
         adc_file = self._write(os.path.join(adc_dir, "application_default_credentials.json"), "{}\n")
-        with mock.patch.dict(os.environ, {"CLOUDSDK_CONFIG": adc_dir, "PATH": f"/tmp/wt{os.pathsep}/usr/bin"}, clear=True):
+        self.assertNotEqual(os.path.realpath(b._bin_cache_dir), os.path.realpath(tempfile.gettempdir()))
+        self.assertEqual(os.stat(b._bin_cache_dir).st_mode & 0o777, 0o700)
+        scrub_vars = {"CLOUDSDK_AUTH_ACCESS_TOKEN": "tok", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE": "/tmp/sa.json", "GITHUB_TOKEN": "ghp_x", "GH_TOKEN": "gho_y"}
+        with mock.patch.dict(os.environ, {"CLOUDSDK_CONFIG": adc_dir, "PATH": f"/tmp/wt{os.pathsep}/usr/bin", **scrub_vars}, clear=True):
             env = b._build_agent_env(wt="/tmp/wt", shim_dir="/tmp/wt/.live-shims")
             self.assertEqual(
                 (env["GOOGLE_CLOUD_PROJECT"], env["CLOUDSDK_CORE_PROJECT"], env["GEMINI_CLI_TRUST_WORKSPACE"], env["GOOGLE_GENAI_USE_VERTEXAI"],
@@ -720,6 +727,8 @@ class TestLiveBackend(unittest.TestCase):
                 ("test-proj", "test-proj", "true", "true", "global", "/dev/null", "/tmp/wt/.live-shims/gcloud_config", adc_file, b._bin_cache_dir),
             )
             self.assertEqual(env["PATH"], f"/tmp/wt/.live-shims{os.pathsep}/usr/bin")
+            for k in scrub_vars:
+                self.assertNotIn(k, env)
         for key_var in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
             with mock.patch.dict(os.environ, {key_var: "test-key"}, clear=True):
                 self.assertNotIn("GOOGLE_GENAI_USE_VERTEXAI", b._build_agent_env())
@@ -977,9 +986,7 @@ class TestLiveBackend(unittest.TestCase):
         self.assertEqual(len(seen_entries), 2)
         self.assertTrue("# Historical Skill" in seen_entries[0]["skill"] and "# Historical Agents" in seen_entries[0]["agents"] and not seen_entries[0]["eval_exists"])
         self.assertTrue("# Working Tree Skill" in seen_entries[1]["skill"] and "# Working Tree Agents" in seen_entries[1]["agents"] and not seen_entries[1]["eval_exists"])
-        cached_base = os.path.join(tempfile.gettempdir(), f"ctk-live-gcluster-{os.getuid()}-{base_sha[:12]}")
-        if os.path.exists(cached_base):
-            os.remove(cached_base)
+        self.assertFalse(os.path.exists(os.path.join(tempfile.gettempdir(), f"ctk-live-gcluster-{os.getuid()}-{base_sha[:12]}")))
         self.assertEqual(subprocess.run(base_cmd, cwd=git_repo, env={**env, "FAKE_FAIL": "1"}, capture_output=True, text=True, check=False).returncode, 1)
 
         bad_skill = self._create_skill("broken-lint-skill", "name: BAD_NAME\ndescription: d", eval_yaml="cases:\n  - name: c1\n    prompt: p\n    expect_keywords_all: [x]\n")
@@ -1236,6 +1243,22 @@ class TestLiveBackend(unittest.TestCase):
                 break
             select.select([], [], [], 0.02)
         self.assertTrue(dead, f"Expected child PID {child_pid} to be killed with process group")
+
+    def test_default_exec_interrupt_kills_child_process_group(self):
+        orig_comm, seen_pids = subprocess.Popen.communicate, []
+
+        def fake_comm(proc_self, input=None, timeout=None):  # pylint: disable=redefined-builtin
+            if not seen_pids:
+                seen_pids.append(proc_self.pid)
+                raise KeyboardInterrupt("stop")
+            return orig_comm(proc_self, input=input, timeout=timeout)
+
+        with mock.patch.object(subprocess.Popen, "communicate", fake_comm):
+            with self.assertRaises(KeyboardInterrupt):
+                LiveCLIEvaluatorBackend._default_exec([sys.executable, "-c", "import time; time.sleep(60)"], self.repo, timeout=5)
+        self.assertEqual(len(seen_pids), 1)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(seen_pids[0], 0)
 
     def test_three_tier_scorer_precedence_expectations_and_lint(self):
         self.assertEqual(resolve_active_scorers(), set(DEFAULT_SCORERS))
