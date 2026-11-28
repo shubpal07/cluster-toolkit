@@ -41,8 +41,31 @@ for a in "$@"; do
 	case "$a" in
 	--) break ;;
 	--help | -h) help=1 ;;
-	-v | --version) ver=1 ;;
-	-s | -w | -c=* | -l=* | -p=* | --add-creator-label | --auto-approve | --await-job-completion | --download-dependencies | --enable-ml-diagnostics | --follow | --force | --gke-disable-parallel-containers | --gke-mtc-enabled | --json-output | --main-only | --no-color | --overwrite | --overwrite-deployment | --pathways | --pathways-deploy-sps | --pathways-headless | --robust | --show | --skip-gke-security-check | --skip-prereqs | --verbose | --*=*) ;;
+	-v | --version)
+		ver=1
+		if [ -z "$sub2" ] && { [ "$sub1" = "cluster" ] || [ "$sub1" = "job" ]; }; then
+			sub2="__blocked_opt__"
+		elif [ -z "$sub3" ] && [ "$sub1" = "job" ] && [ "$sub2" = "config" ]; then
+			sub3="__blocked_opt__"
+		fi
+		;;
+	-s | -w | -c=* | -l=* | -p=* | --add-creator-label | --auto-approve | --await-job-completion | --download-dependencies | --enable-ml-diagnostics | --follow | --force | --gke-disable-parallel-containers | --gke-mtc-enabled | --json-output | --main-only | --no-color | --overwrite | --overwrite-deployment | --pathways | --pathways-deploy-sps | --pathways-headless | --robust | --show | --skip-gke-security-check | --skip-prereqs | --verbose | --*=*)
+		# Cobra treats flags undefined at the current command level as value-taking while
+		# looking up the subcommand, so a subcommand-only boolean before the subcommand
+		# makes the two parsers disagree. Fail closed instead.
+		case "$a" in
+		--no-color | --download-dependencies | -?=* | --*=*) ;;
+		*)
+			if [ -z "$sub1" ]; then
+				sub1="__blocked_opt__"
+			elif [ -z "$sub2" ] && { [ "$sub1" = "cluster" ] || { [ "$sub1" = "job" ] && [ "$a" != "--skip-prereqs" ]; }; }; then
+				sub2="__blocked_opt__"
+			elif [ -z "$sub3" ] && [ "$sub1" = "job" ] && [ "$sub2" = "config" ] && [ "$a" != "--skip-prereqs" ]; then
+				sub3="__blocked_opt__"
+			fi
+			;;
+		esac
+		;;
 	-f)
 		if [ "$sub1" != "job" ] || [ "$sub2" != "logs" ]; then
 			skip=1

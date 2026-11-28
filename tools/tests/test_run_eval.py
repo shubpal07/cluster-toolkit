@@ -1544,6 +1544,10 @@ class TestLiveBackend(unittest.TestCase):
                 "gcluster deploy my-dir --only -h", "gcluster deploy --parallelism -h bp.yaml", "gcluster deploy --future-flag -h bp.yaml",
                 "gcluster deploy --future-bool --only -h bp.yaml", "gcluster deploy --unknown-bool -d -h",
                 "gcluster --future-flag -h deploy bp.yaml", "gcluster job --future-flag -h submit j.yaml",
+                "gcluster -w expand deploy", "gcluster --auto-approve expand deploy", "gcluster -w -h deploy bp.yaml",
+                "gcluster --skip-prereqs expand deploy", "gcluster cluster --skip-prereqs list destroy",
+                "gcluster job --force list submit", "gcluster job config --force show set",
+                "gcluster job -v list submit", "gcluster cluster --version list destroy",
                 "gcluster job submit --dry-run-out=/tmp/m.yaml", "gcluster job config set", "gcluster job submit --name j1 -- python3 train.py --help",
                 "gcluster job submit -n -h", "gcluster job submit -f -h", "gcluster job submit --build-context -h", "gcluster job submit --num-nodes -h",
                 "gcluster job submit --image alpine --command --help", "gcluster job --queue default submit j.yaml", "gcluster job -p proj cancel j1",
@@ -1574,12 +1578,14 @@ class TestLiveBackend(unittest.TestCase):
                     self.assertTrue(r.returncode == 1 and bad_cmd in audit_blk.read_text(encoding="utf-8"), bad_cmd)
             for ok_cmd, want_err in (
                 *(tuple((c, "")) for c in ("gcluster -v", "gcluster deploy --help", "gcluster deploy -w -h bp.yaml", "gcluster job submit --help",
-                                           "gcluster job logs -f -h", "gcluster create examples/bp.yaml -w", "gcluster explain deploy", "gcluster -l=INFO explain deploy",
-                                           "gcluster expand bp.yaml -o deploy", "gcluster job config show", "gcloud -v", "gsutil -v",
+                                           "gcluster job logs -f -h", "gcluster create examples/bp.yaml -w --force", "gcluster explain deploy", "gcluster -l=INFO explain deploy",
+                                           "gcluster --no-color expand bp.yaml -o deploy", "gcluster --download-dependencies expand bp.yaml",
+                                           "gcluster job config show", "gcluster job config --skip-prereqs show", "gcloud -v", "gsutil -v",
                                            "gsutil version -l", "gsutil ls -lh gs://b", "gsutil -?", "terraform version")),
                 *(tuple((c, "offline evaluation sandbox")) for c in (
                     "gcluster cluster list", "gcluster cluster describe c1", "gcluster cluster volume -c c1", "gcluster job list --name-contains submit",
                     "gcluster job list --status -h", "gcluster job list --future-val -h", "gcluster job -p=proj list", "gcluster job -c=my-cluster list",
+                    "gcluster job --skip-prereqs list",
                     "gcluster job inspect j1", "gcluster job logs j1",
                     "gcloud compute instances list --flatten items --uri", "gcloud compute addresses list", "gcloud deployment-manager deployments list",
                     "gcloud run jobs executions list", "gcloud logging settings describe", "gcloud compute interconnects attachments list",
