@@ -46,6 +46,9 @@ class InstallMlDiagnosticsAgentTests(unittest.TestCase):
         (self.root / "etc/systemd/system").mkdir(parents=True)
         (self.root / "usr/bin").mkdir(parents=True)
         (self.root / "etc/apt/sources.list").write_text("", encoding="utf-8")
+        (self.root / "etc/os-release").write_text(
+            'ID=ubuntu\nVERSION_ID="24.04"\n', encoding="utf-8"
+        )
         self.mock_bin = self.tmp / "mock-bin"
         self.mock_bin.mkdir()
         self.state = self.tmp / "state"
@@ -104,7 +107,7 @@ cmd="${args[0]}"
 pkg="${args[1]:-}"
 case "${cmd}" in
 showhold)
-  if [[ -f "${MOCK_STATE}/pkg_${pkg}" ]] && [[ "$(cat "${MOCK_STATE}/pkg_${pkg}")" == "hold ok installed" ]]; then
+  if [[ -f "${MOCK_STATE}/pkg_${pkg}" ]] && [[ "$(cat "${MOCK_STATE}/pkg_${pkg}")" == "hold "* ]]; then
     echo "${pkg}"
   fi
   ;;
@@ -113,7 +116,12 @@ hold)
     echo "E: simulated hold error" >&2
     exit 1
   fi
-  echo "hold ok installed" >"${MOCK_STATE}/pkg_${pkg}"
+  if [[ -f "${MOCK_STATE}/pkg_${pkg}" ]]; then
+    sed 's/^[^ ]*/hold/' "${MOCK_STATE}/pkg_${pkg}" >"${MOCK_STATE}/pkg_${pkg}.tmp"
+    mv "${MOCK_STATE}/pkg_${pkg}.tmp" "${MOCK_STATE}/pkg_${pkg}"
+  else
+    echo "hold ok installed" >"${MOCK_STATE}/pkg_${pkg}"
+  fi
   ;;
 unhold)
   if [[ -f "${MOCK_STATE}/fail_unhold" ]]; then
@@ -121,7 +129,8 @@ unhold)
     exit 1
   fi
   if [[ -f "${MOCK_STATE}/pkg_${pkg}" ]]; then
-    echo "install ok installed" >"${MOCK_STATE}/pkg_${pkg}"
+    sed 's/^[^ ]*/install/' "${MOCK_STATE}/pkg_${pkg}" >"${MOCK_STATE}/pkg_${pkg}.tmp"
+    mv "${MOCK_STATE}/pkg_${pkg}.tmp" "${MOCK_STATE}/pkg_${pkg}"
   fi
   ;;
 esac
@@ -196,6 +205,10 @@ if [[ "$*" == *" update"* ]]; then
     echo "E: simulated scoped update failure" >&2
     exit 100
   fi
+  if [[ -f "${MOCK_STATE}/fail_diagon_update" ]] && [[ "$*" == *"diagon-daemon.list"* ]]; then
+    echo "E: simulated diagon update failure" >&2
+    exit 100
+  fi
   if [[ "$*" == *"ar-transport"* || "$*" == *"a4high-ar"* || "$*" != *"Dir::Etc::sourcelist="* ]]; then
     echo "20240529-1" >"${MOCK_STATE}/cand_apt-transport-artifact-registry"
   fi
@@ -221,6 +234,10 @@ if [[ "$*" == *" install "* ]]; then
   pkg="${pkg_arg%%=*}"
   ver="${pkg_arg#*=}"
   [[ "${ver}" == "${pkg}" ]] && ver="1.2.3-1"
+  if [[ -f "${MOCK_STATE}/pkg_${pkg}" ]] && [[ "$(cat "${MOCK_STATE}/pkg_${pkg}")" == "hold "* ]]; then
+    echo "E: Held packages were changed and -y was used without --allow-change-held-packages." >&2
+    exit 100
+  fi
   echo "install ok installed" >"${MOCK_STATE}/pkg_${pkg}"
   echo "${ver}" >"${MOCK_STATE}/ver_${pkg}"
   if [[ "${pkg}" == "mldiagnostics-daemon" ]]; then
@@ -303,6 +320,7 @@ esac
                 [
                     f"APT_SOURCES_LIST={shlex.quote(str(self.root / 'etc/apt/sources.list'))}",
                     f"APT_SOURCES_DIR={shlex.quote(str(self.root / 'etc/apt/sources.list.d'))}",
+                    f"OS_RELEASE_FILE={shlex.quote(str(self.root / 'etc/os-release'))}",
                     f"AR_TRANSPORT_KEYRING={shlex.quote(str(self.root / 'usr/share/keyrings/google-cloud-ar-transport.gpg'))}",
                     f"AR_TRANSPORT_LIST={shlex.quote(str(self.root / 'etc/apt/sources.list.d/google-cloud-ar-transport.list'))}",
                     f"DIAGON_KEYRING={shlex.quote(str(self.root / 'usr/share/keyrings/diagon-daemon.gpg'))}",
@@ -380,6 +398,10 @@ esac
             {"DIAGON_APT_COMPONENT": "main[1]"},
             {"DIAGON_APT_REPO_URL": "https://example.com\\bad"},
             {"DIAGON_APT_REPO_URL": "https://example.com#bad"},
+            {"DIAGON_APT_REPO_URL": "http://insecure.example/repo"},
+            {"DIAGON_APT_REPO_URL": "file:///tmp/repo"},
+            {"DIAGON_APT_REPO_URL": "https://"},
+            {"DIAGON_APT_REPO_URL": "ar+https://"},
             {"DIAGON_GPG_KEY_URL": "http://insecure.example/key.gpg"},
             {"DIAGON_GPG_KEY_URL": "file:///etc/passwd"},
             {"DIAGON_GPG_KEY_URL": "https://"},
@@ -686,6 +708,179 @@ esac
         self.assertNotIn(
             "packages.cloud.google.com", self.log_file.read_text(encoding="utf-8")
         )
+
+    def test_check_platform_requires_ubuntu_os_release(self) -> None:
+        os_release = self.root / "etc/os-release"
+        for content, expected in (
+            ('ID=debian\nVERSION_ID="12"\n', "Unsupported OS 'debian'"),
+            ('ID="rocky"\nVERSION_ID="9"\n', "Unsupported OS 'rocky'"),
+            (None, "Unsupported OS 'unknown'"),
+        ):
+            with self.subTest(content=content):
+                self.log_file.write_text("", encoding="utf-8")
+                if content is None:
+                    os_release.unlink(missing_ok=True)
+                else:
+                    os_release.write_text(content, encoding="utf-8")
+                res = self._run_sourced("main\n")
+                self.assertEqual(res.returncode, 0)
+                self.assertIn(expected, res.stderr)
+                self.assertNotIn("apt-get", self.log_file.read_text(encoding="utf-8"))
+
+        for valid in ('ID="Ubuntu"\n', "  ID = 'ubuntu' \r\n"):
+            with self.subTest(valid=valid):
+                os_release.write_text(valid, encoding="utf-8")
+                res = self._run_sourced('check_platform\necho "${SKIP_INSTALL}"\n')
+                self.assertEqual(res.returncode, 0, res.stderr)
+                self.assertEqual(res.stdout.strip(), "0")
+
+    def test_commit_clears_stale_backups_before_subsequent_rollback(self) -> None:
+        existing = self.root / "etc/apt/sources.list.d/google-cloud-ar-transport.list"
+        existing.write_text("stale-ar-content\n", encoding="utf-8")
+        brand_new = self.root / "etc/apt/sources.list.d/diagon-daemon.list"
+        src_ar = self.tmp / "ar.list"
+        src_diagon = self.tmp / "diagon.list"
+        src_ar.write_text("updated-ar-content\n", encoding="utf-8")
+        src_diagon.write_text("new-diagon-content\n", encoding="utf-8")
+
+        res = self._run_sourced(
+            f"install_tracked_file {shlex.quote(str(src_ar))} {shlex.quote(str(existing))} 0644\n"
+            "commit_apt_changes\n"
+            f"install_tracked_file {shlex.quote(str(src_diagon))} {shlex.quote(str(brand_new))} 0644\n"
+            "rollback_apt_files\n"
+            'rm -rf -- "${TMP_DIR}"\n'
+        )
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual(
+            existing.read_text(encoding="utf-8"), "updated-ar-content\n"
+        )
+        self.assertFalse(brand_new.exists())
+
+    def test_ar_transport_survives_when_diagon_repo_fails(self) -> None:
+        (self.state / "fail_diagon_update").write_text("1\n", encoding="utf-8")
+        res = self._run_sourced("main\n")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("WARNING:", res.stderr)
+        self.assertTrue(
+            (self.root / "etc/apt/sources.list.d/google-cloud-ar-transport.list").exists()
+        )
+        self.assertTrue(
+            (self.root / "usr/share/keyrings/google-cloud-ar-transport.gpg").exists()
+        )
+        self.assertFalse(
+            (self.root / "etc/apt/sources.list.d/diagon-daemon.list").exists()
+        )
+        self.assertFalse(
+            (self.root / "usr/share/keyrings/diagon-daemon.gpg").exists()
+        )
+
+    def test_hold_half_installed_recovery_and_restore(self) -> None:
+        (self.state / "pkg_apt-transport-artifact-registry").write_text(
+            "install ok installed\n", encoding="utf-8"
+        )
+        # Failure path preserves the original broken hold suffix.
+        (self.state / "pkg_mldiagnostics-daemon").write_text(
+            "hold ok half-installed\n", encoding="utf-8"
+        )
+        (self.state / "ver_mldiagnostics-daemon").write_text(
+            "1.0.0-1\n", encoding="utf-8"
+        )
+        (self.state / "fail_apt_install").write_text("1\n", encoding="utf-8")
+        res_fail = self._run_sourced("main --version=1.2.3-1\n")
+        self.assertEqual(res_fail.returncode, 0)
+        self.assertEqual(
+            (self.state / "pkg_mldiagnostics-daemon").read_text(encoding="utf-8").strip(),
+            "hold ok half-installed",
+        )
+
+        # Recovery path unholds before apt-get install and reaches hold ok installed.
+        (self.state / "fail_apt_install").unlink()
+        res_ok = self._run_sourced("main --version=1.2.3-1\n")
+        self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+        self.assertEqual(
+            (self.state / "pkg_mldiagnostics-daemon").read_text(encoding="utf-8").strip(),
+            "hold ok installed",
+        )
+        self.assertTrue((self.state / "service_active").exists())
+
+    def test_file_mode_follows_symlinks_and_masked_unit_is_preserved(self) -> None:
+        target = self.tmp / "mode_target"
+        target.write_text("x\n", encoding="utf-8")
+        target.chmod(0o640)
+        link = self.tmp / "mode_link"
+        link.symlink_to(target)
+        res_mode = self._run_sourced(f"file_mode {shlex.quote(str(link))}\n")
+        self.assertEqual(res_mode.stdout.strip(), "640")
+
+        (self.state / "pkg_mldiagnostics-daemon").write_text(
+            "install ok installed\n", encoding="utf-8"
+        )
+        (self.state / "ver_mldiagnostics-daemon").write_text(
+            "1.2.3-1\n", encoding="utf-8"
+        )
+        service_file = self.root / "etc/systemd/system/diagon-daemon.service"
+        service_file.symlink_to("/dev/null")
+        res = self._run_sourced("main\n")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("is masked (/dev/null)", res.stderr)
+        self.assertTrue(service_file.is_symlink())
+        self.assertEqual(os.readlink(service_file), "/dev/null")
+        self.assertNotIn("systemctl", self.log_file.read_text(encoding="utf-8"))
+
+    def test_run_or_warn_logs_sanitized_stderr_and_exit_code(self) -> None:
+        res_ok = self._run_sourced(
+            'run_or_warn "should not warn" bash -c "echo ok-notice >&2"\n'
+        )
+        self.assertEqual(res_ok.returncode, 0)
+        self.assertIn("ok-notice", res_ok.stderr)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8"), "")
+
+        res_err = self._run_sourced(
+            'run_or_warn "step failed" bash -c \'printf "line1\\r\\nline2\\007end\\n" >&2; exit 42\'\n'
+        )
+        self.assertEqual(res_err.returncode, 1)
+        self.assertIn("step failed (exit 42: line1 line2end)", res_err.stderr)
+        self.assertIn(
+            "step failed (exit 42: line1 line2end)",
+            self.log_file.read_text(encoding="utf-8"),
+        )
+
+    def test_reboot_fast_path_unhold_on_version_clear_and_unit_drift(self) -> None:
+        # Initial install to populate matching binary, unit, and active service state.
+        res_init = self._run_sourced("main --version=1.2.3-1\n")
+        self.assertEqual(res_init.returncode, 0, res_init.stderr)
+
+        # 1. Reboot fast-path with matching pinned version: no apt-get, curl, or restart.
+        self.log_file.write_text("", encoding="utf-8")
+        res_reboot = self._run_sourced("main --version=1.2.3-1\n")
+        self.assertEqual(res_reboot.returncode, 0, res_reboot.stderr)
+        reboot_calls = self.log_file.read_text(encoding="utf-8")
+        self.assertNotIn("apt-get", reboot_calls)
+        self.assertNotIn("curl", reboot_calls)
+        self.assertNotIn("daemon-reload", reboot_calls)
+        self.assertNotIn("restart", reboot_calls)
+
+        # 2. Clearing --version unholds the matching installed package without reinstalling.
+        self.log_file.write_text("", encoding="utf-8")
+        res_unhold = self._run_sourced("main\n")
+        self.assertEqual(res_unhold.returncode, 0, res_unhold.stderr)
+        self.assertIn("apt-mark -o DPkg::Lock::Timeout=30 unhold mldiagnostics-daemon", self.log_file.read_text(encoding="utf-8"))
+        self.assertEqual(
+            (self.state / "pkg_mldiagnostics-daemon").read_text(encoding="utf-8").strip(),
+            "install ok installed",
+        )
+        self.assertNotIn("apt-get", self.log_file.read_text(encoding="utf-8"))
+
+        # 3. Drifted unit file triggers daemon-reload and restart without reinstalling.
+        service_file = self.root / "etc/systemd/system/diagon-daemon.service"
+        service_file.write_text("[Unit]\nDescription=Stale\n", encoding="utf-8")
+        self.log_file.write_text("", encoding="utf-8")
+        res_drift = self._run_sourced("main\n")
+        self.assertEqual(res_drift.returncode, 0, res_drift.stderr)
+        drift_calls = self.log_file.read_text(encoding="utf-8")
+        self.assertIn("systemctl daemon-reload", drift_calls)
+        self.assertIn("systemctl restart diagon-daemon.service", drift_calls)
+        self.assertNotIn("apt-get", drift_calls)
 
 
 if __name__ == "__main__":

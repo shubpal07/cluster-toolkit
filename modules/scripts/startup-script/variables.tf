@@ -232,7 +232,7 @@ variable "enable_ml_diagnostics_daemon" {
 }
 
 variable "ml_diagnostics_daemon_version" {
-  description = "Optional Debian package version to lock when enable_ml_diagnostics_daemon is true (for example, \"1.0.1\"). Leave empty to install the latest available release on new VMs and keep existing installs across reboots."
+  description = "Optional Debian package version to lock when enable_ml_diagnostics_daemon is true (for example, \"<VERSION>\"). Leave empty to install the latest available release on new VMs and keep existing installs across reboots."
   type        = string
   default     = ""
   nullable    = false

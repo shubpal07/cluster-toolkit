@@ -32,10 +32,11 @@ deployment_groups:
     source: modules/scripts/startup-script
     settings:
       enable_ml_diagnostics_daemon: true
-      ml_diagnostics_daemon_version: "1.0.1"
+      ml_diagnostics_daemon_version: "1.2.3"
       runners:
-      # Verify the automatic ML Diagnostics runner destination does not collide
-      # with a custom runner named install_ml_diagnostics_agent.sh in runners_map.
+      # Exercise a custom runner named install_ml_diagnostics_agent.sh alongside
+      # the automatic ML Diagnostics runner; note that runners_map key
+      # collisions are caught at terraform plan, not terraform validate.
       - type: shell
         destination: "install_ml_diagnostics_agent.sh"
         content: |

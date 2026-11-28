@@ -37,6 +37,7 @@ CHANNEL="${DIAGON_CHANNEL:-hypercomputecluster.googleapis.com/diagnostics}"
 # System paths (unconditionally initialized so runtime invocations ignore env
 # overrides, while sourced unit tests can redirect to temp directories).
 APT_SOURCES_LIST="/etc/apt/sources.list" APT_SOURCES_DIR="/etc/apt/sources.list.d"
+OS_RELEASE_FILE="/etc/os-release"
 AR_TRANSPORT_KEYRING="/usr/share/keyrings/google-cloud-ar-transport.gpg"
 AR_TRANSPORT_LIST="/etc/apt/sources.list.d/google-cloud-ar-transport.list"
 DIAGON_KEYRING="/usr/share/keyrings/diagon-daemon.gpg"
@@ -59,13 +60,36 @@ log_msg() {
 log_info() { log_msg INFO user.info "$*"; }
 log_warn() { log_msg WARNING user.warning "$*"; }
 run_or_warn() {
-	local msg="$1"
+	local msg="$1" err_file="" rc=0 detail=""
 	shift
-	"$@" && return 0
-	log_warn "${msg}"
+	if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
+		err_file="$(mktemp "${TMP_DIR}/stderr.XXXXXX" 2>/dev/null || true)"
+	else
+		err_file="$(mktemp 2>/dev/null || true)"
+	fi
+	if [[ -z "${err_file}" ]]; then
+		if "$@"; then return 0; else rc=$?; fi
+		log_warn "${msg} (exit ${rc})"
+		return 1
+	fi
+	if "$@" 2>"${err_file}"; then rc=0; else rc=$?; fi
+	if [[ -s "${err_file}" ]]; then
+		cat "${err_file}" >&2 || true
+		if [[ "${rc}" -ne 0 ]]; then
+			detail="$(tr '\r\n' '  ' <"${err_file}" | tr -dc '[:print:]' | sed -E 's/[[:space:]]+/ /g; s/^ | $//g')"
+			detail="${detail:0:500}"
+		fi
+	fi
+	rm -f -- "${err_file}" || true
+	[[ "${rc}" -eq 0 ]] && return 0
+	if [[ -n "${detail}" ]]; then
+		log_warn "${msg} (exit ${rc}: ${detail})"
+	else
+		log_warn "${msg} (exit ${rc})"
+	fi
 	return 1
 }
-file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || true; }
+file_mode() { stat -L -c '%a' "$1" 2>/dev/null || stat -L -f '%Lp' "$1" 2>/dev/null || true; }
 
 usage() {
 	cat <<EOF
@@ -123,7 +147,13 @@ install_tracked_file() {
 	install_atomic_file "${src}" "${dest}" "${mode}"
 }
 
-commit_apt_changes() { TRACKED_FILES=(); }
+commit_apt_changes() {
+	TRACKED_FILES=()
+	if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
+		rm -rf -- "${TMP_DIR}/backups" || true
+		mkdir -m 0700 "${TMP_DIR}/backups" || true
+	fi
+}
 
 rollback_apt_files() {
 	local idx dest backup mode
@@ -197,8 +227,11 @@ validate_config() {
 	require_match "channel" "${CHANNEL}" '^[A-Za-z0-9._:/-]+$' || return 1
 	require_match "APT suite" "${APT_SUITE}" '^[A-Za-z0-9._/+-]+$' || return 1
 	require_match "APT component" "${APT_COMPONENT}" '^[A-Za-z0-9._/+-]+$' || return 1
-	run_or_warn "Invalid APT repository URL '${APT_REPO_URL}'." is_safe_url "${APT_REPO_URL}" || return 1
-	if [[ "${GPG_KEY_URL}" != https://* || "${#GPG_KEY_URL}" -le 8 ]] || ! is_safe_url "${GPG_KEY_URL}"; then
+	if [[ "${APT_REPO_URL}" != https://?* && "${APT_REPO_URL}" != ar+https://?* ]] || ! is_safe_url "${APT_REPO_URL}"; then
+		log_warn "Invalid APT repository URL '${APT_REPO_URL}'; must be an https:// or ar+https:// URL."
+		return 1
+	fi
+	if [[ "${GPG_KEY_URL}" != https://?* ]] || ! is_safe_url "${GPG_KEY_URL}"; then
 		log_warn "Invalid GPG key URL '${GPG_KEY_URL}'; must be an https:// URL."
 		return 1
 	fi
@@ -207,19 +240,39 @@ validate_config() {
 # --- Platform & Package Helpers ---
 is_root() { [[ "${EUID:-$(id -u)}" -eq 0 ]]; }
 
+get_os_id() {
+	[[ -r "${OS_RELEASE_FILE}" ]] || return 0
+	awk -F= '/^[ \t]*ID[ \t]*=/{
+		val = substr($0, index($0, "=") + 1)
+		gsub(/^[ \t]+|[ \t\r]+$/, "", val)
+		if ((substr(val, 1, 1) == "\"" && substr(val, length(val), 1) == "\"") ||
+			(substr(val, 1, 1) == "\047" && substr(val, length(val), 1) == "\047")) {
+			val = substr(val, 2, length(val) - 2)
+		}
+		gsub(/^[ \t]+|[ \t]+$/, "", val)
+		print tolower(val)
+		exit
+	}' "${OS_RELEASE_FILE}" 2>/dev/null || true
+}
+
 check_platform() {
-	local arch cmd msg=""
+	local arch os_id cmd msg=""
 	arch="$(uname -m)"
 	if [[ "${arch}" != "x86_64" ]]; then
 		msg="Unsupported architecture '${arch}'; ${PACKAGE_NAME} requires x86_64. Skipping installation."
 	else
-		for cmd in apt-get apt-cache apt-mark dpkg dpkg-query systemctl; do
-			command -v "${cmd}" >/dev/null 2>&1 || {
-				msg="Required command '${cmd}' not found (unsupported OS); skipping ${PACKAGE_NAME} installation."
-				break
-			}
-		done
-		[[ -z "${msg}" ]] && ! is_root && msg="Root privileges are required to install ${PACKAGE_NAME}; skipping installation."
+		os_id="$(get_os_id)"
+		if [[ "${os_id}" != "ubuntu" ]]; then
+			msg="Unsupported OS '${os_id:-unknown}'; ${PACKAGE_NAME} requires Ubuntu. Skipping installation."
+		else
+			for cmd in apt-get apt-cache apt-mark dpkg dpkg-query systemctl; do
+				command -v "${cmd}" >/dev/null 2>&1 || {
+					msg="Required command '${cmd}' not found (unsupported OS); skipping ${PACKAGE_NAME} installation."
+					break
+				}
+			done
+			[[ -z "${msg}" ]] && ! is_root && msg="Root privileges are required to install ${PACKAGE_NAME}; skipping installation."
+		fi
 	fi
 	if [[ -n "${msg}" ]]; then
 		log_warn "${msg}"
@@ -245,9 +298,9 @@ get_package_state() {
 	query_output="$(dpkg-query -W -f='${Status}\t${Version}\n' "${PACKAGE_NAME}" 2>/dev/null || true)"
 	[[ -n "${query_output}" ]] || return 0
 	IFS=$'\t' read -r status ver <<<"${query_output}"
+	[[ "${status}" == "hold "* ]] && PKG_HELD=1
 	case "${status}" in
-	"install ok installed") PKG_INSTALLED=1 PKG_VERSION="${ver}" ;;
-	"hold ok installed") PKG_INSTALLED=1 PKG_HELD=1 PKG_VERSION="${ver}" ;;
+	"install ok installed" | "hold ok installed") PKG_INSTALLED=1 PKG_VERSION="${ver}" ;;
 	esac
 }
 
@@ -419,7 +472,8 @@ ensure_ar_transport() {
 	fi
 	ensure_apt_repo "${AR_TRANSPORT_SUITE}" "" "https://packages.cloud.google.com/apt/doc/apt-key.gpg" "${AR_TRANSPORT_KEYRING}" \
 		"https://packages.cloud.google.com/apt" "${AR_TRANSPORT_SUITE}" "main" "${AR_TRANSPORT_LIST}" || return 1
-	run_or_warn "Failed to install ${AR_TRANSPORT_PACKAGE}." apt_install "${AR_TRANSPORT_PACKAGE}"
+	run_or_warn "Failed to install ${AR_TRANSPORT_PACKAGE}." apt_install "${AR_TRANSPORT_PACKAGE}" || return 1
+	commit_apt_changes
 }
 
 ensure_diagon_package() {
@@ -464,8 +518,6 @@ ensure_diagon_package() {
 	if [[ -n "${VERSION}" ]]; then
 		log_info "Pinning ${PACKAGE_NAME} at version ${VERSION} via apt-mark hold."
 		run_apt_mark hold "${PACKAGE_NAME}" >/dev/null || log_warn "Failed to hold ${PACKAGE_NAME} at version ${VERSION}; continuing."
-	elif [[ "$(pkg_status "${PACKAGE_NAME}")" == "hold ok installed" ]]; then
-		run_apt_mark unhold "${PACKAGE_NAME}" >/dev/null || log_warn "Failed to unhold ${PACKAGE_NAME} after install."
 	fi
 	RESTORE_HOLD_ON_EXIT=0
 	PACKAGE_CHANGED=1
@@ -473,6 +525,10 @@ ensure_diagon_package() {
 
 # --- Systemd Service ---
 configure_and_start_service() {
+	if [[ -L "${SERVICE_FILE}" ]] && [[ "$(readlink -f "${SERVICE_FILE}" 2>/dev/null || true)" == "/dev/null" ]]; then
+		log_warn "${SERVICE_FILE} is masked (/dev/null); skipping service configuration and startup."
+		return 0
+	fi
 	run_or_warn "Expected daemon binary ${BINARY_PATH} does not exist or is not executable." test -x "${BINARY_PATH}" || return 1
 	init_tmp_dir || return 1
 
